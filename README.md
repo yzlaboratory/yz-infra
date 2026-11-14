@@ -16,6 +16,7 @@ yz-infra/
 │   ├── backend.tfvars.example
 │   └── ...
 ├── host/harden.sh              idempotent host hardening (run by cloud-init)
+├── host/infra-health.sh        server-side shared-stack health probe
 ├── proxy/                      Traefik + Docker socket proxy
 │   ├── compose.yaml
 │   ├── .env.example
@@ -31,7 +32,8 @@ yz-infra/
 │   ├── restic/                 backup script and env example
 │   └── systemd/                daily backup timer
 ├── scripts/bootstrap-state-bucket.sh  one-time state bucket setup
-├── scripts/sync-stack.sh       copy proxy/ or ops/ to the server
+├── scripts/sync-stack.sh       copy proxy/ or ops/ to the server manually
+├── .github/workflows/deploy-infra.yml  shared proxy/ops/restic deployment
 └── .github/workflows/deploy.yml  reusable app deploy workflow
 ```
 
@@ -147,7 +149,48 @@ tofu -chdir=tofu force-unlock <LOCK_ID>
 
 The operator identity needs `s3:ListBucket` and `s3:GetBucketLocation` on the bucket and `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` on `yz-infra/terraform.tfstate` and its `.tflock` object. The state contains the Tailscale auth key, so keep the bucket private and use a dedicated credential. Client-side OpenTofu state encryption is not enabled; S3 SSE-S3 plus IAM is the current boundary.
 
-## 2. Start Traefik once
+## 2. Deploy the shared stack
+
+The `Deploy infra stack` workflow owns the proxy, ops, and backup stack:
+
+- joins the tailnet as `tag:ci`
+- waits for cloud-init, then syncs `proxy/` and `ops/`
+- writes `/srv/proxy/.env` and `/etc/yz-infra/restic.env` (mode `0600`) from GitHub secrets/variables
+- starts Traefik, the socket proxy, Uptime Kuma, and Dozzle
+- installs `yz-backup.sh` and the systemd backup timer
+- initializes restic if needed and runs a first backup
+- writes `/etc/yz-infra/infra-deployed.sha`
+- installs and runs `/usr/local/sbin/yz-infra-health <sha>`
+
+The health probe is server-side and invoked over Tailscale SSH. It is intentionally not a public HTTP endpoint. It returns success only when the deployed SHA matches, Traefik/socket-proxy/Uptime Kuma/Dozzle are running, both localhost endpoints respond, and the backup timer is enabled. If the current revision is already marked healthy, the workflow skips the deploy steps.
+
+Required repository variables:
+
+- `ACME_EMAIL`
+- `RESTIC_REPOSITORY` (for example `s3:https://<account>.r2.cloudflarestorage.com/<bucket>/yz-infra`)
+- optional: `ACME_CA_SERVER`, `TRAEFIK_LOG_LEVEL`, `RESTIC_CHECK`
+- `INFRA_DEPLOY_ENABLED` — set to `true` after the first successful manual run
+
+Required repository secrets:
+
+- `SSH_HOST` — `100.89.17.51`
+- `SSH_USER` — `deploy`
+- `SSH_PRIVATE_KEY` — contents of `~/.ssh/id_ed25519_yz_infra`
+- optional: `SSH_KNOWN_HOSTS`
+- `TS_OAUTH_CLIENT_ID` and `TS_OAUTH_SECRET` — OAuth client tagged `tag:ci`
+- `RESTIC_PASSWORD`
+- `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`
+- optional: `HEALTHCHECK_URL`
+
+First run:
+
+1. Set the variables and secrets.
+2. Actions → **Deploy infra stack** → **Run workflow**.
+3. After it succeeds, set `INFRA_DEPLOY_ENABLED=true`. Pushes touching `proxy/**` or `ops/**` then deploy automatically.
+
+The manual Traefik/ops/restic commands below remain as a fallback.
+
+### Manual fallback: Traefik
 
 DNS for every app hostname must point at the server before the first certificate request. Point records directly at the server IP (Cloudflare "DNS only") for HTTP-01 issuance. A proxied Cloudflare record with Full (strict) fails before Traefik has a valid origin certificate; use DNS-only for the first issuance, then switch to proxied Full (strict) once the certificate exists.
 
@@ -180,7 +223,7 @@ docker volume rm proxy-letsencrypt
 docker compose up -d
 ```
 
-## 3. Start the ops stack
+### Manual fallback: ops stack
 
 ```sh
 rsync -az --exclude '.env' --exclude 'backups/' ops/ deploy@<tailscale-ip>:/srv/ops/
@@ -199,7 +242,7 @@ ssh -L 3001:127.0.0.1:3001 -L 9999:127.0.0.1:9999 deploy@<tailscale-ip>
 
 Configure Uptime Kuma monitors from its UI. They are not in git unless you export them.
 
-### Backups (restic)
+### Manual fallback: restic backups
 
 The host script installs `restic`. Backups cover `/srv/apps`, `/srv/proxy`, `/srv/ops`, and `/etc/yz-infra`, except `/etc/yz-infra/restic.env` and `/etc/yz-infra/bootstrap.env` (keep the restic credentials in a password manager; the bootstrap file can contain the Tailscale key if a join failed). The example target is **Cloudflare R2** over its S3-compatible API. Swap the repository URL for B2 or SFTP if you prefer; those backends need different credentials (`B2_ACCOUNT_ID`/`B2_ACCOUNT_KEY`, or an SSH key and known_hosts).
 
@@ -236,7 +279,7 @@ Remove `/tmp/restore` after checking the files. For a real restore, stop the aff
 
 The repo is encrypted, but it contains `.env` files. Protect the restic password like a production secret.
 
-## 4. Onboard an app
+## 3. Onboard an app
 
 Each app is a separate repo. Copy `apps/example/` as a starting point.
 
@@ -357,5 +400,8 @@ Before trusting this in production:
 - [ ] Uptime Kuma and Dozzle are reachable only through the tunnel.
 - [ ] App `.env` files are mode `0600`.
 - [ ] A restic backup ran and a restore was tested.
+- [ ] The `Deploy infra stack` workflow succeeded and `/etc/yz-infra/infra-deployed.sha` matches the current commit.
+- [ ] `ssh yz-vps 'sudo /usr/local/sbin/yz-infra-health <sha>'` returns success.
+- [ ] `INFRA_DEPLOY_ENABLED=true` is set after the first successful stack deploy.
 - [ ] `docker inspect <container> --format '{{json .HostConfig.LogConfig}}'` shows the log limits.
 - [ ] Re-running `harden.sh` makes no unexpected changes.
