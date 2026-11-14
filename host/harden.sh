@@ -203,8 +203,16 @@ if [[ $ENABLE_TAILSCALE == "1" ]]; then
     log "Tailscale already has an IPv4 address"
   fi
 
-  for _ in $(seq 1 30); do
-    if [[ -n "$(tailscale ip -4 2>/dev/null || true)" ]]; then
+  tailscale_ready() {
+    local status
+    status=$(tailscale status --json 2>/dev/null) || return 1
+    printf '%s' "$status" | jq -e '.BackendState == "Running"' >/dev/null 2>&1 || return 1
+    [[ -n "$(tailscale ip -4 2>/dev/null || true)" ]]
+  }
+
+  log "waiting up to 5 minutes for Tailscale to be Running"
+  for _ in $(seq 1 150); do
+    if tailscale_ready; then
       TAILSCALE_OK=1
       break
     fi
@@ -214,8 +222,8 @@ if [[ $ENABLE_TAILSCALE == "1" ]]; then
   if [[ $TAILSCALE_OK -eq 1 ]]; then
     log "Tailscale is up: $(tailscale ip -4 | head -n1)"
     # Do not leave the auth key on disk after a successful join. The key is
-    # still present in cloud-init metadata and OpenTofu state; use an ephemeral
-    # key and rotate it.
+    # still present in cloud-init metadata and OpenTofu state; use a
+    # non-ephemeral server key and rotate it.
     if [[ -f /etc/yz-infra/bootstrap.env ]]; then
       sed -i 's|^TAILSCALE_AUTH_KEY=.*|TAILSCALE_AUTH_KEY=""|' /etc/yz-infra/bootstrap.env
       chmod 0600 /etc/yz-infra/bootstrap.env
