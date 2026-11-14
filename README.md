@@ -78,7 +78,7 @@ tofu -chdir=tofu plan -out=tfplan
 tofu -chdir=tofu apply tfplan
 ```
 
-Use `tofu -chdir=tofu output server_ipv4` and `server_ipv6` for DNS records. Wait up to 5 minutes for the node, then confirm the backend is actually running before relying on it:
+Use `tofu -chdir=tofu output server_ipv4` and `server_ipv6` for DNS records. Give cloud-init a few minutes; the hardening script waits up to 5 minutes for Tailscale, then confirm the backend is actually running before relying on it:
 
 ```sh
 tailscale status --json | jq -r '.BackendState'
