@@ -197,8 +197,10 @@ if [[ $ENABLE_TAILSCALE == "1" ]]; then
     if [[ $TAILSCALE_SSH == "1" ]]; then
       TS_UP_ARGS+=(--ssh)
     fi
-    # Pass the key through the environment so it does not appear in `ps`.
-    TS_AUTHKEY="$TAILSCALE_AUTH_KEY" tailscale up "${TS_UP_ARGS[@]}" || log "warning: tailscale up failed"
+    # tailscale up does not consume TS_AUTHKEY here; pass the key explicitly.
+    # It is briefly visible in the process list, so the key is scrubbed from
+    # bootstrap.env after a successful join.
+    tailscale up --auth-key="$TAILSCALE_AUTH_KEY" "${TS_UP_ARGS[@]}" || log "warning: tailscale up failed"
   else
     log "Tailscale already has an IPv4 address"
   fi
