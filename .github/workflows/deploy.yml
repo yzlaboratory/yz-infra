@@ -1,0 +1,235 @@
+name: Deploy app
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: Directory under remote_root and unique name in Traefik labels.
+        required: true
+        type: string
+      image:
+        description: Image repository, e.g. ghcr.io/org/example.
+        required: true
+        type: string
+      tag:
+        description: Image tag. Defaults to sha-<first 7 chars of the caller commit>.
+        required: false
+        type: string
+        default: ""
+      sha:
+        description: Full commit SHA used for the default tag. Useful for workflow_run callers.
+        required: false
+        type: string
+        default: ""
+      ref:
+        description: Git ref checked out for the compose file. Defaults to the caller's GITHUB_SHA.
+        required: false
+        type: string
+        default: ""
+      compose_file:
+        description: Compose file path in the caller repository.
+        required: false
+        type: string
+        default: compose.yaml
+      backup_script:
+        description: Optional backup hook path in the caller repository; copied to backup.sh.
+        required: false
+        type: string
+        default: backup.sh
+      health_url:
+        description: Public URL checked after deploy. Empty skips the check.
+        required: false
+        type: string
+        default: ""
+      use_tailscale:
+        description: Join the tailnet with an ephemeral node before SSH.
+        required: false
+        type: boolean
+        default: true
+      remote_root:
+        description: Parent directory for app stacks on the server.
+        required: false
+        type: string
+        default: /srv/apps
+      ssh_port:
+        description: SSH port on the server.
+        required: false
+        type: number
+        default: 22
+    secrets:
+      SSH_HOST:
+        description: Tailscale IP or hostname of the server.
+        required: true
+      SSH_USER:
+        description: Deploy user on the server.
+        required: true
+      SSH_PRIVATE_KEY:
+        description: Private key for the deploy user.
+        required: true
+      SSH_KNOWN_HOSTS:
+        description: Optional pinned known_hosts content.
+        required: false
+      TS_OAUTH_CLIENT_ID:
+        description: Tailscale OAuth client ID for an ephemeral CI node.
+        required: false
+      TS_OAUTH_SECRET:
+        description: Tailscale OAuth client secret.
+        required: false
+      GHCR_TOKEN:
+        description: Read-only GitHub token for private GHCR packages.
+        required: false
+      GHCR_USER:
+        description: Username paired with GHCR_TOKEN.
+        required: false
+
+permissions:
+  contents: read
+
+# One deploy at a time per app. Each deploy uses an isolated temporary Docker
+# config, so different apps can deploy concurrently without clobbering each
+# other's registry credentials.
+concurrency:
+  group: deploy-${{ inputs.app_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APP_NAME: ${{ inputs.app_name }}
+      IMAGE: ${{ inputs.image }}
+      TAG_INPUT: ${{ inputs.tag }}
+      SHA_INPUT: ${{ inputs.sha }}
+      COMPOSE_FILE: ${{ inputs.compose_file }}
+      BACKUP_SCRIPT: ${{ inputs.backup_script }}
+      HEALTH_URL: ${{ inputs.health_url }}
+      REMOTE_ROOT: ${{ inputs.remote_root }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PORT: ${{ inputs.ssh_port }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GHCR_USER: ${{ secrets.GHCR_USER }}
+
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Resolve image reference
+        id: image
+        run: |
+          set -euo pipefail
+          if [[ ! $APP_NAME =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+            echo "invalid app_name: $APP_NAME" >&2
+            exit 1
+          fi
+          if [[ ! $IMAGE =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "invalid image repository: $IMAGE" >&2
+            exit 1
+          fi
+          tag="${TAG_INPUT:-}"
+          if [[ -z $tag ]]; then
+            sha="${SHA_INPUT:-$GITHUB_SHA}"
+            tag="sha-${sha:0:7}"
+          fi
+          if [[ ! $tag =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "invalid tag: $tag" >&2
+            exit 1
+          fi
+          printf 'ref=%s:%s\n' "$IMAGE" "$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Join tailnet
+        if: inputs.use_tailscale
+        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: ${{ secrets.SSH_HOST }}
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 0600 "$HOME/.ssh/id_ed25519"
+
+          if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> "$HOME/.ssh/known_hosts"
+          fi
+          if [[ ! -s $HOME/.ssh/known_hosts ]]; then
+            echo "could not obtain a host key for $SSH_HOST" >&2
+            exit 1
+          fi
+          chmod 0600 "$HOME/.ssh/known_hosts"
+
+          {
+            printf 'Host target\n'
+            printf '  HostName %s\n' "$SSH_HOST"
+            printf '  User %s\n' "$SSH_USER"
+            printf '  Port %s\n' "$SSH_PORT"
+            printf '  IdentityFile %s\n' "$HOME/.ssh/id_ed25519"
+            printf '  IdentitiesOnly yes\n'
+            printf '  StrictHostKeyChecking yes\n'
+            printf '  UserKnownHostsFile %s\n' "$HOME/.ssh/known_hosts"
+          } > "$HOME/.ssh/config"
+          chmod 0600 "$HOME/.ssh/config"
+
+      - name: Deploy
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          remote_dir="${REMOTE_ROOT}/${APP_NAME}"
+          ssh target "mkdir -p '$remote_dir'"
+          scp -q "$COMPOSE_FILE" "target:$remote_dir/compose.yaml"
+          if [[ -n ${BACKUP_SCRIPT:-} && -f $BACKUP_SCRIPT ]]; then
+            scp -q "$BACKUP_SCRIPT" "target:$remote_dir/backup.sh"
+            ssh target "chmod 0755 '$remote_dir/backup.sh'"
+          fi
+
+          remote_config=""
+          cleanup() {
+            if [[ -n $remote_config ]]; then
+              ssh target "rm -rf '$remote_config'" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          docker_env=""
+          if [[ -n ${GHCR_TOKEN:-} && -n ${GHCR_USER:-} ]]; then
+            if [[ ! $GHCR_USER =~ ^[A-Za-z0-9-]+$ ]]; then
+              echo "invalid GHCR_USER" >&2
+              exit 1
+            fi
+            remote_config="/tmp/yz-docker-${APP_NAME}-${GITHUB_RUN_ID}"
+            ssh target "umask 077 && rm -rf '$remote_config' && mkdir -p '$remote_config' && chmod 700 '$remote_config'"
+            printf '%s' "$GHCR_TOKEN" | ssh target "DOCKER_CONFIG='$remote_config' docker login ghcr.io -u '$GHCR_USER' --password-stdin"
+            docker_env="DOCKER_CONFIG='$remote_config' "
+          fi
+
+          ssh target "cd '$remote_dir' && ${docker_env}IMAGE_REF='$IMAGE_REF' docker compose pull"
+          ssh target "cd '$remote_dir' && ${docker_env}IMAGE_REF='$IMAGE_REF' docker compose up -d --remove-orphans --wait"
+
+          cleanup
+          trap - EXIT
+
+      - name: Check health
+        if: inputs.health_url != ''
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 24); do
+            if curl -fsS --max-time 10 "$HEALTH_URL" >/dev/null; then
+              echo "healthy after ${attempt} attempt(s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "health check failed: $HEALTH_URL" >&2
+          exit 1
