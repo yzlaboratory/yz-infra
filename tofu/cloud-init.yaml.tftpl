@@ -1,0 +1,38 @@
+#cloud-config
+# Managed by yz-infra. Do not edit the rendered user data by hand.
+package_update: true
+package_upgrade: false
+
+# Disable password SSH and root login before the hardening script runs.
+ssh_pwauth: false
+disable_root: true
+
+packages:
+  - qemu-guest-agent
+
+write_files:
+  - path: /etc/yz-infra/bootstrap.env
+    owner: root:root
+    permissions: "0600"
+    content: |
+      DEPLOY_USER="${deploy_user}"
+      DEPLOY_SSH_PUBLIC_KEY="${ssh_public_key}"
+      ENABLE_TAILSCALE="${enable_tailscale}"
+      TAILSCALE_AUTH_KEY="${tailscale_authkey}"
+      TAILSCALE_HOSTNAME="${tailscale_hostname}"
+      TAILSCALE_SSH="${tailscale_ssh}"
+      SSH_PORT="${ssh_port}"
+      SWAP_SIZE_MB="${swap_size_mb}"
+      TIMEZONE="${timezone}"
+
+  - path: /usr/local/sbin/yz-harden.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      ${indent(6, harden_script)}
+
+runcmd:
+  - [systemctl, enable, --now, qemu-guest-agent]
+  - [bash, /usr/local/sbin/yz-harden.sh]
+
+final_message: "yz-infra cloud-init finished after $UPTIME seconds"
