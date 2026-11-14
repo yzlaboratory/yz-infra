@@ -52,7 +52,7 @@ apt_install() {
 
 log "installing base packages"
 apt_update
-apt_install curl ca-certificates gnupg jq ufw restic openssh-client iptables
+apt_install curl ca-certificates gnupg jq ufw restic rsync openssh-client iptables
 
 if ! printf '%s\n' "$DEPLOY_SSH_PUBLIC_KEY" | ssh-keygen -l -f - >/dev/null 2>&1; then
   die "DEPLOY_SSH_PUBLIC_KEY is not a valid OpenSSH public key"
