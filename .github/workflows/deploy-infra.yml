@@ -1,0 +1,202 @@
+name: Deploy infra stack
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - proxy/**
+      - ops/**
+      - host/infra-health.sh
+      - .github/workflows/deploy-infra.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Set the repository variable INFRA_DEPLOY_ENABLED=true after the first
+# successful manual run. Until then, push-triggered runs are skipped.
+concurrency:
+  group: deploy-infra
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || vars.INFRA_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+      ACME_EMAIL: ${{ vars.ACME_EMAIL }}
+      ACME_CA_SERVER: ${{ vars.ACME_CA_SERVER }}
+      TRAEFIK_LOG_LEVEL: ${{ vars.TRAEFIK_LOG_LEVEL || 'INFO' }}
+      RESTIC_REPOSITORY: ${{ vars.RESTIC_REPOSITORY }}
+      RESTIC_PASSWORD: ${{ secrets.RESTIC_PASSWORD }}
+      RESTIC_CHECK: ${{ vars.RESTIC_CHECK || '0' }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate required configuration
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?set repository secret SSH_HOST}"
+          : "${SSH_USER:?set repository secret SSH_USER}"
+          : "${SSH_PRIVATE_KEY:?set repository secret SSH_PRIVATE_KEY}"
+          : "${TS_OAUTH_CLIENT_ID:?set repository secret TS_OAUTH_CLIENT_ID}"
+          : "${TS_OAUTH_SECRET:?set repository secret TS_OAUTH_SECRET}"
+          : "${ACME_EMAIL:?set repository variable ACME_EMAIL}"
+          : "${RESTIC_REPOSITORY:?set repository variable RESTIC_REPOSITORY}"
+          : "${RESTIC_PASSWORD:?set repository secret RESTIC_PASSWORD}"
+          : "${R2_ACCESS_KEY_ID:?set repository secret R2_ACCESS_KEY_ID}"
+          : "${R2_SECRET_ACCESS_KEY:?set repository secret R2_SECRET_ACCESS_KEY}"
+
+      - name: Join tailnet
+        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: ${{ secrets.SSH_HOST }}
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 0600 "$HOME/.ssh/id_ed25519"
+
+          if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -H "$SSH_HOST" >> "$HOME/.ssh/known_hosts"
+          fi
+          if [[ ! -s $HOME/.ssh/known_hosts ]]; then
+            echo "could not obtain a host key for $SSH_HOST" >&2
+            exit 1
+          fi
+          chmod 0600 "$HOME/.ssh/known_hosts"
+
+          {
+            printf 'Host target\n'
+            printf '  HostName %s\n' "$SSH_HOST"
+            printf '  User %s\n' "$SSH_USER"
+            printf '  Port 22\n'
+            printf '  IdentityFile %s\n' "$HOME/.ssh/id_ed25519"
+            printf '  IdentitiesOnly yes\n'
+            printf '  StrictHostKeyChecking yes\n'
+            printf '  UserKnownHostsFile %s\n' "$HOME/.ssh/known_hosts"
+          } > "$HOME/.ssh/config"
+          chmod 0600 "$HOME/.ssh/config"
+
+      - name: Check existing infra health
+        id: health
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          scp -q host/infra-health.sh target:/tmp/yz-infra-health.sh
+          ssh target 'sudo install -m 0755 /tmp/yz-infra-health.sh /usr/local/sbin/yz-infra-health && rm -f /tmp/yz-infra-health.sh'
+          if ssh target "/usr/local/sbin/yz-infra-health '$GITHUB_SHA'"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "infra already healthy at $GITHUB_SHA"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for host and ensure rsync
+        if: steps.health.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          ssh target 'sudo cloud-init status --wait'
+          ssh target 'command -v rsync >/dev/null 2>&1 || (sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rsync)'
+
+      - name: Sync proxy and ops
+        if: steps.health.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          ssh target 'mkdir -p /srv/proxy /srv/ops'
+          rsync -az --delete \
+            --exclude '.env' \
+            --exclude 'acme.json' \
+            --exclude 'backups/' \
+            proxy/ target:/srv/proxy/
+          rsync -az --delete \
+            --exclude '.env' \
+            --exclude 'backups/' \
+            ops/ target:/srv/ops/
+
+      - name: Write stack environment
+        if: steps.health.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          umask 077
+
+          {
+            printf 'ACME_EMAIL=%s\n' "$ACME_EMAIL"
+            printf 'TRAEFIK_LOG_LEVEL=%s\n' "$TRAEFIK_LOG_LEVEL"
+            if [[ -n ${ACME_CA_SERVER:-} ]]; then
+              printf 'ACME_CA_SERVER=%s\n' "$ACME_CA_SERVER"
+            fi
+          } > "$RUNNER_TEMP/proxy.env"
+          scp -q "$RUNNER_TEMP/proxy.env" target:/tmp/proxy.env
+          ssh target 'install -m 0600 /tmp/proxy.env /srv/proxy/.env && rm -f /tmp/proxy.env'
+          rm -f "$RUNNER_TEMP/proxy.env"
+
+          {
+            printf 'RESTIC_REPOSITORY=%q\n' "$RESTIC_REPOSITORY"
+            printf 'RESTIC_PASSWORD=%q\n' "$RESTIC_PASSWORD"
+            printf 'AWS_ACCESS_KEY_ID=%q\n' "$R2_ACCESS_KEY_ID"
+            printf 'AWS_SECRET_ACCESS_KEY=%q\n' "$R2_SECRET_ACCESS_KEY"
+            printf 'AWS_DEFAULT_REGION=auto\n'
+            printf 'HEALTHCHECK_URL=%q\n' "${HEALTHCHECK_URL:-}"
+            printf 'RESTIC_CHECK=%q\n' "${RESTIC_CHECK:-0}"
+          } > "$RUNNER_TEMP/restic.env"
+          scp -q "$RUNNER_TEMP/restic.env" target:/tmp/restic.env
+          ssh target 'sudo install -d -m 0700 /etc/yz-infra && sudo install -m 0600 /tmp/restic.env /etc/yz-infra/restic.env && rm -f /tmp/restic.env'
+          rm -f "$RUNNER_TEMP/restic.env"
+
+      - name: Start proxy and ops
+        if: steps.health.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          ssh target 'cd /srv/proxy && docker compose -p proxy up -d --remove-orphans --wait'
+          ssh target 'cd /srv/ops && docker compose -p ops up -d --remove-orphans'
+
+      - name: Install backup units
+        if: steps.health.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          ssh target 'sudo install -m 0755 /srv/ops/restic/backup.sh /usr/local/sbin/yz-backup.sh'
+          ssh target 'sudo install -m 0644 /srv/ops/systemd/yz-backup.service /srv/ops/systemd/yz-backup.timer /etc/systemd/system/'
+          ssh target 'sudo systemctl daemon-reload && sudo systemctl enable --now yz-backup.timer'
+
+      - name: Initialize restic and run first backup
+        if: steps.health.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          ssh target 'sudo bash -c "set -a; . /etc/yz-infra/restic.env; set +a; restic snapshots >/dev/null 2>&1 || restic init"'
+          ssh target 'sudo systemctl start yz-backup.service'
+          ssh target 'sudo bash -c "set -a; . /etc/yz-infra/restic.env; set +a; restic snapshots"'
+
+      - name: Verify stack
+        if: steps.health.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          ssh target 'cd /srv/proxy && docker compose -p proxy ps'
+          ssh target 'cd /srv/ops && docker compose -p ops ps'
+          ssh target 'curl -fsS -o /dev/null http://127.0.0.1:3001/ && curl -fsS -o /dev/null http://127.0.0.1:9999/'
+          echo "shared stack is running"
+
+      - name: Record deployed revision
+        if: steps.health.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          ssh target "printf '%s\n' '$GITHUB_SHA' | sudo tee /etc/yz-infra/infra-deployed.sha >/dev/null && sudo chmod 0644 /etc/yz-infra/infra-deployed.sha"
