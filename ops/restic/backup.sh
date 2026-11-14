@@ -28,13 +28,17 @@ on_exit() {
 }
 trap on_exit EXIT
 
-# Give each app a chance to produce a consistent database dump before the
+# Give each app/stack a chance to produce a consistent database dump before the
 # snapshot. Hooks must be executable.
 shopt -s nullglob
+hook_failed=0
 for hook in /srv/apps/*/backup.sh /srv/proxy/backup.sh /srv/ops/backup.sh; do
   if [[ -x $hook ]]; then
     echo "running app backup hook: $hook"
-    "$hook"
+    if ! "$hook"; then
+      echo "WARNING: backup hook failed, continuing with the host snapshot: $hook" >&2
+      hook_failed=1
+    fi
   fi
 done
 
@@ -42,6 +46,7 @@ restic backup \
   --tag yz-infra \
   --exclude-caches \
   --exclude '/etc/yz-infra/restic.env' \
+  --exclude '/etc/yz-infra/bootstrap.env' \
   /srv/apps \
   /srv/proxy \
   /srv/ops \
@@ -55,6 +60,11 @@ restic forget \
 
 if [[ ${RESTIC_CHECK:-0} == "1" ]]; then
   restic check --read-data-subset=5%
+fi
+
+if [[ $hook_failed -ne 0 ]]; then
+  echo "one or more backup hooks failed; the host snapshot was still created" >&2
+  exit 1
 fi
 
 if [[ -n $HEALTHCHECK_URL ]]; then

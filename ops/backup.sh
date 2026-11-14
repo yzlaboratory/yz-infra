@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p backups
 
-container=$(docker compose ps -q uptime-kuma 2>/dev/null || true)
+container=$(docker compose ps -q uptime-kuma 2>/dev/null | head -n1 || true)
 start_after=0
 if [[ -n $container && $(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || echo false) == "true" ]]; then
   docker compose stop uptime-kuma >/dev/null
@@ -15,7 +15,9 @@ if [[ -n $container && $(docker inspect -f '{{.State.Running}}' "$container" 2>/
 fi
 cleanup() {
   if [[ $start_after -eq 1 ]]; then
-    docker compose start uptime-kuma >/dev/null 2>&1 || true
+    if ! docker compose start uptime-kuma >/dev/null 2>&1; then
+      echo "WARNING: could not restart uptime-kuma" >&2
+    fi
   fi
 }
 trap cleanup EXIT
