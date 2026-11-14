@@ -1,0 +1,22 @@
+# OpenTofu / Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+terraform.tfvars
+*.tfvars
+!*.tfvars.example
+
+# Runtime secrets and state
+.env
+*.env
+!*.env.example
+!**/*.env.example
+acme.json
+data/
+backups/
+
+# OS noise
+.DS_Store
+Thumbs.db
