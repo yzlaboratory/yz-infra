@@ -23,3 +23,6 @@ backups/
 # OS noise
 .DS_Store
 Thumbs.db
+
+# Local-only operator notes (not committed)
+docs/local-*.md
