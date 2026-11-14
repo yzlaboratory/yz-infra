@@ -190,6 +190,17 @@ First run:
 
 The manual Traefik/ops/restic commands below remain as a fallback.
 
+### Where tokens live
+
+The stack workflow uses only GitHub secrets/variables; nothing has to stay in a local `.env` on this Mac except your Tailscale login.
+
+- **Stack deploy:** `SSH_*`, `TS_OAUTH_*`, `RESTIC_PASSWORD`, `R2_*`, `ACME_EMAIL`, `RESTIC_REPOSITORY`.
+- **Future OpenTofu provisioning workflow:** `HCLOUD_TOKEN` and the server `TF_VAR_tailscale_authkey`. The server key is only used at first boot; CI uses the Tailscale OAuth client.
+- **Future DNS automation:** `PORKBUN_API_KEY` and `PORKBUN_SECRET_KEY` (or Cloudflare equivalents), once the provider/zone is chosen.
+- **State access:** the OpenTofu S3 backend needs AWS credentials. Prefer a GitHub OIDC role scoped to the state bucket over long-lived AWS keys.
+
+Put production credentials in a protected GitHub environment (for example `production`) with required reviewers, and never expose them to `pull_request` workflows.
+
 ### Manual fallback: Traefik
 
 DNS for every app hostname must point at the server before the first certificate request. Point records directly at the server IP (Cloudflare "DNS only") for HTTP-01 issuance. A proxied Cloudflare record with Full (strict) fails before Traefik has a valid origin certificate; use DNS-only for the first issuance, then switch to proxied Full (strict) once the certificate exists.
