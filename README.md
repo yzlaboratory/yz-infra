@@ -340,7 +340,7 @@ These are known gaps, not oversights:
 
 ## Cost sketch
 
-One Hetzner `cx22` (2 vCPU, 4 GB) is roughly €4–8/month depending on location and VAT. Cloudflare R2 includes 10 GB of storage for free and has no egress fees; small backups cost a few cents. The S3 state bucket holds a few KB and costs cents even with version history. Hetzner's own backup option is disabled by default (`enable_backups = false`) because restic already covers it. Prices change; check the providers.
+One Hetzner `cx23` (2 vCPU, 4 GB) in `nbg1` is roughly €6–8/month depending on location and VAT. Cloudflare R2 includes 10 GB of storage for free and has no egress fees; small backups cost a few cents. The S3 state bucket holds a few KB and costs cents even with version history. Hetzner's own backup option is disabled by default (`enable_backups = false`) because restic already covers it. Prices change; check the providers.
 
 ## Review checklist
 

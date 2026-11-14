@@ -12,15 +12,15 @@ variable "name" {
 }
 
 variable "server_type" {
-  description = "Hetzner server type. cx22 is 2 vCPU / 4 GB."
+  description = "Hetzner server type. cx23 is 2 vCPU / 4 GB."
   type        = string
-  default     = "cx22"
+  default     = "cx23"
 }
 
 variable "location" {
   description = "Hetzner location, e.g. fsn1, nbg1, hel1, ash, hil."
   type        = string
-  default     = "fsn1"
+  default     = "nbg1"
 }
 
 variable "image" {

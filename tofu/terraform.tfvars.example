@@ -2,8 +2,8 @@
 # Do not commit terraform.tfvars.
 
 name        = "yz-vps"
-server_type = "cx22" # 2 vCPU, 4 GB
-location    = "fsn1"
+server_type = "cx23" # 2 vCPU, 4 GB
+location    = "nbg1"
 image       = "ubuntu-24.04"
 
 # Hetzner's own backups cost extra. Restic already covers this stack.
