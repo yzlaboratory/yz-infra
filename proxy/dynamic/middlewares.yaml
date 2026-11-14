@@ -1,0 +1,23 @@
+http:
+  middlewares:
+    security-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: false
+        contentTypeNosniff: true
+        frameDeny: true
+        referrerPolicy: strict-origin-when-cross-origin
+        permissionsPolicy: "camera=(), microphone=(), geolocation=(), payment=()"
+
+    compress:
+      compress: {}
+
+    # Attach to an app router to allow only localhost and the Tailscale CGNAT
+    # range. Useful for admin UIs that should not be public.
+    internal-only:
+      ipAllowList:
+        sourceRange:
+          - 127.0.0.1/32
+          - 100.64.0.0/10
+          - ::1/128
