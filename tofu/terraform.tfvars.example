@@ -13,15 +13,24 @@ ssh_public_key_path = "~/.ssh/id_ed25519.pub"
 deploy_user         = "deploy"
 ssh_port            = 22
 
+# At least one SSH path is required:
+#   - tailscale_authkey (recommended), or
+#   - at least one ssh_source_cidrs entry (temporary bootstrap).
+# The default path uses TF_VAR_tailscale_authkey, so a copied file alone cannot
+# plan until that environment variable is set.
+
 # Bootstrap safety net. Set this to your current public IP/32 for the first
 # boot, verify Tailscale works, then set it back to [] and apply again.
 ssh_source_cidrs = []
 
 # Prefer exporting the Tailscale auth key instead of writing it here:
 #   export TF_VAR_tailscale_authkey='tskey-auth-...'
+# Use a non-ephemeral pre-authorized key for the server. Ephemeral keys are
+# only for short-lived CI nodes.
 # tailscale_authkey = "tskey-auth-replace-me"
 
-tailscale_hostname = "yz-vps"
+# Defaults to var.name. Leave unset unless you need a different node name.
+# tailscale_hostname = "yz-vps"
 tailscale_ssh      = false
 allow_tailscale_udp = true
 

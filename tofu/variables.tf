@@ -75,7 +75,7 @@ variable "ssh_source_cidrs" {
 }
 
 variable "tailscale_authkey" {
-  description = "Ephemeral, pre-authorized Tailscale auth key. Empty disables Tailscale and requires ssh_source_cidrs."
+  description = "Pre-authorized Tailscale auth key for the server. Use a non-ephemeral key; empty disables Tailscale and requires ssh_source_cidrs."
   type        = string
   sensitive   = true
   default     = ""
