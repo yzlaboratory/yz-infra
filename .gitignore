@@ -5,6 +5,7 @@
 *.tfplan
 crash.log
 terraform.tfvars
+backend.tfvars
 *.tfvars
 !*.tfvars.example
 

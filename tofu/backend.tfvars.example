@@ -1,0 +1,15 @@
+# Copy this file to backend.tfvars and edit the bucket/key if needed.
+# Do not commit backend.tfvars.
+#
+# State is stored in a dedicated, versioned S3 bucket. The bucket is created
+# once with scripts/bootstrap-state-bucket.sh.
+# Credentials come from the standard AWS environment/profile chain.
+bucket = "yz-infra-tfstate-772161516556"
+key    = "yz-infra/terraform.tfstate"
+region = "eu-central-1"
+
+# SSE-S3. The bucket also has default encryption enabled.
+encrypt = true
+
+# Native S3 locking using conditional writes. Requires OpenTofu 1.10.2+.
+use_lockfile = true

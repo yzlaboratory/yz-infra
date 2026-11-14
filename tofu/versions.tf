@@ -1,5 +1,6 @@
 terraform {
-  required_version = ">= 1.6.0"
+  # Native S3 state locking (use_lockfile) requires OpenTofu 1.10.2 or newer.
+  required_version = ">= 1.10.2"
 
   required_providers {
     hcloud = {
