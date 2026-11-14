@@ -162,7 +162,7 @@ The `Deploy infra stack` workflow owns the proxy, ops, and backup stack:
 - writes `/etc/yz-infra/infra-deployed.sha`
 - installs and runs `/usr/local/sbin/yz-infra-health <sha>`
 
-The health probe is server-side and invoked over Tailscale SSH. It is intentionally not a public HTTP endpoint. It returns success only when the deployed SHA matches, Traefik/socket-proxy/Uptime Kuma/Dozzle are running, both localhost endpoints respond, and the backup timer is enabled. If the current revision is already marked healthy, the workflow skips the deploy steps.
+The health probe is server-side and invoked over Tailscale SSH. It is intentionally not a public HTTP endpoint. It returns success only when the deployed SHA matches, Traefik/socket-proxy/Uptime Kuma/Dozzle are running, both localhost endpoints respond, and the backup timer is enabled and its last run did not fail. If the current revision is already marked healthy, the workflow skips the deploy steps.
 
 Required repository variables:
 

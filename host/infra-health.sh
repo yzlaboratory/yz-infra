@@ -44,5 +44,9 @@ curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:9999/ || { echo "dozzle end
 [[ -r /etc/yz-infra/restic.env ]] || { echo "missing /etc/yz-infra/restic.env" >&2; exit 1; }
 systemctl is-enabled --quiet yz-backup.timer || { echo "yz-backup.timer is not enabled" >&2; exit 1; }
 systemctl is-active --quiet yz-backup.timer || { echo "yz-backup.timer is not active" >&2; exit 1; }
+if systemctl is-failed --quiet yz-backup.service; then
+  echo "the last yz-backup.service run failed" >&2
+  exit 1
+fi
 
 echo "infra healthy at $EXPECTED"
