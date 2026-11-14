@@ -1,0 +1,27 @@
+[Unit]
+Description=yz-infra daily restic backup
+Documentation=https://github.com/yzlaboratory/yz-infra
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/yz-backup.sh
+Environment=RESTIC_CACHE_DIR=/var/cache/restic
+Environment=DOCKER_CONFIG=/run/yz-backup-docker
+CacheDirectory=restic
+RuntimeDirectory=yz-backup-docker
+UMask=0077
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/srv /var/cache/restic
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

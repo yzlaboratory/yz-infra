@@ -1,0 +1,45 @@
+name: ops
+
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:2.5.9
+    restart: unless-stopped
+    # Localhost only. Reach it through an SSH tunnel over Tailscale.
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - uptime-kuma-data:/app/data
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  dozzle:
+    image: amir20/dozzle:v11.4.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9999:8080"
+    volumes:
+      # Dozzle only reads logs, but Docker socket access is still powerful.
+      # Keep this service bound to localhost.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      DOZZLE_LEVEL: info
+      DOZZLE_TAILSIZE: "300"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  uptime-kuma-data:
+    name: ops-uptime-kuma-data
