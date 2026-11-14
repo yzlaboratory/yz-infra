@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Optional app backup hook.
 #
-# /srv/ops/restic/backup.sh runs every executable /srv/apps/*/backup.sh before
-# the restic snapshot. Write consistent dumps into ./backups so restic picks
-# them up. Keep the output small; it is uploaded daily.
+# /usr/local/sbin/yz-backup.sh on the host runs every executable
+# /srv/apps/*/backup.sh before the restic snapshot. Write consistent dumps into
+# ./backups so restic picks them up. Keep the output small; it is uploaded daily.
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p backups

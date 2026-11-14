@@ -192,6 +192,8 @@ jobs:
           if [[ -n ${BACKUP_SCRIPT:-} && -f $BACKUP_SCRIPT ]]; then
             scp -q "$BACKUP_SCRIPT" "target:$remote_dir/backup.sh"
             ssh target "chmod 0755 '$remote_dir/backup.sh'"
+          else
+            ssh target "rm -f '$remote_dir/backup.sh'"
           fi
 
           remote_config=""
@@ -214,8 +216,8 @@ jobs:
             docker_env="DOCKER_CONFIG='$remote_config' "
           fi
 
-          ssh target "cd '$remote_dir' && ${docker_env}IMAGE_REF='$IMAGE_REF' docker compose pull"
-          ssh target "cd '$remote_dir' && ${docker_env}IMAGE_REF='$IMAGE_REF' docker compose up -d --remove-orphans --wait"
+          ssh target "cd '$remote_dir' && ${docker_env}IMAGE_REF='$IMAGE_REF' docker compose -p '$APP_NAME' pull"
+          ssh target "cd '$remote_dir' && ${docker_env}IMAGE_REF='$IMAGE_REF' docker compose -p '$APP_NAME' up -d --remove-orphans --wait"
 
           cleanup
           trap - EXIT
