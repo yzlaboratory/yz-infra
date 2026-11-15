@@ -11,6 +11,8 @@
 # Usage: yz-infra-health <expected-git-sha>
 set -euo pipefail
 
+[[ ${EUID} -eq 0 ]] || { echo "run as root" >&2; exit 1; }
+
 EXPECTED=${1:-}
 if [[ $EXPECTED == "--skip-revision" ]]; then
   EXPECTED=""

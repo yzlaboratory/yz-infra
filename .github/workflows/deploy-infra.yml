@@ -103,7 +103,7 @@ jobs:
           set -euo pipefail
           scp -q host/infra-health.sh target:/tmp/yz-infra-health.sh
           ssh target 'sudo install -m 0755 /tmp/yz-infra-health.sh /usr/local/sbin/yz-infra-health && rm -f /tmp/yz-infra-health.sh'
-          if ssh target "/usr/local/sbin/yz-infra-health '$GITHUB_SHA'"; then
+          if ssh target "sudo /usr/local/sbin/yz-infra-health '$GITHUB_SHA'"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "infra already healthy at $GITHUB_SHA"
           else
@@ -198,11 +198,11 @@ jobs:
         if: steps.health.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          ssh target '/usr/local/sbin/yz-infra-health --skip-revision'
+          ssh target 'sudo /usr/local/sbin/yz-infra-health --skip-revision'
 
       - name: Record deployed revision
         if: steps.health.outputs.skip != 'true'
         run: |
           set -euo pipefail
           ssh target "printf '%s\n' '$GITHUB_SHA' | sudo tee /etc/yz-infra/infra-deployed.sha >/dev/null && sudo chmod 0644 /etc/yz-infra/infra-deployed.sha"
-          ssh target "if ! /usr/local/sbin/yz-infra-health '$GITHUB_SHA'; then sudo rm -f /etc/yz-infra/infra-deployed.sha; exit 1; fi"
+          ssh target "if ! sudo /usr/local/sbin/yz-infra-health '$GITHUB_SHA'; then sudo rm -f /etc/yz-infra/infra-deployed.sha; exit 1; fi"
