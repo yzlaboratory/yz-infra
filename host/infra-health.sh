@@ -12,15 +12,23 @@
 set -euo pipefail
 
 EXPECTED=${1:-}
-[[ -n $EXPECTED ]] || { echo "usage: $0 <expected-git-sha>" >&2; exit 2; }
+if [[ $EXPECTED == "--skip-revision" ]]; then
+  EXPECTED=""
+  SKIP_REVISION=1
+else
+  SKIP_REVISION=0
+  [[ -n $EXPECTED ]] || { echo "usage: $0 <expected-git-sha|--skip-revision>" >&2; exit 2; }
+fi
 
-MARKER=/etc/yz-infra/infra-deployed.sha
-[[ -r $MARKER ]] || { echo "missing $MARKER" >&2; exit 1; }
-DEPLOYED=$(tr -d '\n' < "$MARKER")
-[[ $DEPLOYED == "$EXPECTED" ]] || {
-  echo "deployed revision $DEPLOYED does not match $EXPECTED" >&2
-  exit 1
-}
+if [[ $SKIP_REVISION -eq 0 ]]; then
+  MARKER=/etc/yz-infra/infra-deployed.sha
+  [[ -r $MARKER ]] || { echo "missing $MARKER" >&2; exit 1; }
+  DEPLOYED=$(tr -d '\n' < "$MARKER")
+  [[ $DEPLOYED == "$EXPECTED" ]] || {
+    echo "deployed revision $DEPLOYED does not match $EXPECTED" >&2
+    exit 1
+  }
+fi
 
 proxy_service_running() {
   docker compose -f /srv/proxy/compose.yaml -p proxy ps --status running --services | grep -qx "$1"
@@ -49,4 +57,8 @@ if systemctl is-failed --quiet yz-backup.service; then
   exit 1
 fi
 
-echo "infra healthy at $EXPECTED"
+if [[ $SKIP_REVISION -eq 1 ]]; then
+  echo "infra healthy"
+else
+  echo "infra healthy at $EXPECTED"
+fi

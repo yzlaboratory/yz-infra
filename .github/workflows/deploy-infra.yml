@@ -65,7 +65,6 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
-          ping: ${{ secrets.SSH_HOST }}
 
       - name: Configure SSH
         run: |
@@ -195,8 +194,15 @@ jobs:
           ssh target 'curl -fsS -o /dev/null http://127.0.0.1:3001/ && curl -fsS -o /dev/null http://127.0.0.1:9999/'
           echo "shared stack is running"
 
+      - name: Verify infra health
+        if: steps.health.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          ssh target '/usr/local/sbin/yz-infra-health --skip-revision'
+
       - name: Record deployed revision
         if: steps.health.outputs.skip != 'true'
         run: |
           set -euo pipefail
           ssh target "printf '%s\n' '$GITHUB_SHA' | sudo tee /etc/yz-infra/infra-deployed.sha >/dev/null && sudo chmod 0644 /etc/yz-infra/infra-deployed.sha"
+          ssh target "if ! /usr/local/sbin/yz-infra-health '$GITHUB_SHA'; then sudo rm -f /etc/yz-infra/infra-deployed.sha; exit 1; fi"
