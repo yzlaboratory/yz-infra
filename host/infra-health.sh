@@ -43,11 +43,24 @@ ops_service_running uptime-kuma || { echo "uptime-kuma is not running" >&2; exit
 ops_service_running dozzle || { echo "dozzle is not running" >&2; exit 1; }
 
 TRAEFIK_ID=$(docker compose -f /srv/proxy/compose.yaml -p proxy ps -q traefik)
-TRAEFIK_HEALTH=$(docker inspect -f '{{.State.Health.Status}}' "$TRAEFIK_ID" 2>/dev/null || echo unknown)
+TRAEFIK_HEALTH=unknown
+for _ in $(seq 1 30); do
+  TRAEFIK_HEALTH=$(docker inspect -f '{{.State.Health.Status}}' "$TRAEFIK_ID" 2>/dev/null || echo unknown)
+  [[ $TRAEFIK_HEALTH == "healthy" ]] && break
+  sleep 2
+done
 [[ $TRAEFIK_HEALTH == "healthy" ]] || { echo "traefik health is $TRAEFIK_HEALTH" >&2; exit 1; }
 
-curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:3001/ || { echo "uptime-kuma endpoint is down" >&2; exit 1; }
-curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:9999/ || { echo "dozzle endpoint is down" >&2; exit 1; }
+OPS_READY=0
+for _ in $(seq 1 30); do
+  if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:3001/ &&
+     curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:9999/; then
+    OPS_READY=1
+    break
+  fi
+  sleep 2
+done
+[[ $OPS_READY -eq 1 ]] || { echo "ops endpoints are not ready" >&2; exit 1; }
 
 [[ -r /etc/yz-infra/restic.env ]] || { echo "missing /etc/yz-infra/restic.env" >&2; exit 1; }
 systemctl is-enabled --quiet yz-backup.timer || { echo "yz-backup.timer is not enabled" >&2; exit 1; }
