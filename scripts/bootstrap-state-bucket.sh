@@ -5,26 +5,28 @@
 #   scripts/bootstrap-state-bucket.sh [bucket] [region]
 #
 # Defaults:
-#   bucket = yz-infra-tfstate-772161516556
+#   bucket = yz-infra-tfstate-<aws-account-id>
 #   region = eu-central-1
 #
 # Requires AWS credentials with permission to create and configure the bucket.
 set -euo pipefail
 
-BUCKET=${1:-yz-infra-tfstate-772161516556}
 REGION=${2:-eu-central-1}
-
-[[ $BUCKET =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || {
-  echo "invalid bucket name: $BUCKET" >&2
-  exit 1
-}
 
 command -v aws >/dev/null 2>&1 || {
   echo "aws CLI is required" >&2
   exit 1
 }
 
-echo "account: $(aws sts get-caller-identity --query Account --output text)"
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+BUCKET=${1:-yz-infra-tfstate-$ACCOUNT}
+
+[[ $BUCKET =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || {
+  echo "invalid bucket name: $BUCKET" >&2
+  exit 1
+}
+
+echo "account: $ACCOUNT"
 echo "bucket:  $BUCKET"
 echo "region:  $REGION"
 

@@ -173,7 +173,7 @@ Required repository variables:
 
 Required repository secrets:
 
-- `SSH_HOST` — `100.89.17.51`
+- `SSH_HOST` — Tailscale IP of the server
 - `SSH_USER` — `deploy`
 - `SSH_PRIVATE_KEY` — contents of `~/.ssh/id_ed25519_yz_infra`
 - optional: `SSH_KNOWN_HOSTS`

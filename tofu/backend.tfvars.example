@@ -4,7 +4,7 @@
 # State is stored in a dedicated, versioned S3 bucket. The bucket is created
 # once with scripts/bootstrap-state-bucket.sh.
 # Credentials come from the standard AWS environment/profile chain.
-bucket = "yz-infra-tfstate-772161516556"
+bucket = "yz-infra-tfstate-<your-account-id>"
 key    = "yz-infra/terraform.tfstate"
 region = "eu-central-1"
 
