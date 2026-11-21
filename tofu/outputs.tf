@@ -31,3 +31,8 @@ output "firewall_name" {
   description = "Hetzner firewall name."
   value       = hcloud_firewall.this.name
 }
+
+output "app_hostname" {
+  description = "Public hostname for the shared auth service."
+  value       = "${var.app_subdomain}.${var.dns_zone}"
+}

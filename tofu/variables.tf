@@ -121,3 +121,26 @@ variable "labels" {
   type        = map(string)
   default     = {}
 }
+
+variable "dns_zone" {
+  description = "Porkbun authoritative DNS zone without a trailing dot."
+  type        = string
+}
+
+variable "app_subdomain" {
+  description = "Subdomain for the shared auth service."
+  type        = string
+  default     = "auth"
+}
+
+variable "ses_mail_subdomain" {
+  description = "Subdomain used by the SES sending identity."
+  type        = string
+  default     = "mail"
+}
+
+variable "ses_dkim_tokens" {
+  description = "SES DKIM tokens whose CNAME records should exist under the SES mail subdomain."
+  type        = list(string)
+  default     = []
+}

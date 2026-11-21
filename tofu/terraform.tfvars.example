@@ -40,3 +40,9 @@ timezone     = "UTC"
 labels = {
   environment = "production"
 }
+
+dns_zone = "yzlaboratory.dev"
+app_subdomain = "auth"
+
+# Set these after creating/verifying the SES identity for the mail subdomain.
+ses_dkim_tokens = []
