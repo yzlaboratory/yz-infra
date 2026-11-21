@@ -1,0 +1,36 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: ShellCheck
+        run: shellcheck -S warning host/*.sh ops/*.sh ops/restic/*.sh proxy/*.sh scripts/*.sh apps/example/backup.sh.example
+
+      - name: Actionlint
+        env:
+          SHELLCHECK_OPTS: -e SC2029
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$(go env GOPATH)/bin/actionlint"
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f
+        with:
+          tofu_version: 1.13.9
+
+      - name: OpenTofu format
+        run: tofu -chdir=tofu fmt -check -recursive
