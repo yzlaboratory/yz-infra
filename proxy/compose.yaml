@@ -2,7 +2,7 @@ name: proxy
 
 services:
   traefik:
-    image: traefik:v3.7.17
+    image: traefik:v3.7.17@sha256:f4bb143d1135a579b630ed491e17ec50f6f7c9c6a30585ff3d385471d2a86f5a
     restart: unless-stopped
     command:
       - --global.checknewversion=false
@@ -51,9 +51,8 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Read-only Docker API for Traefik. Never expose this container.
   socket-proxy:
-    image: tecnativa/docker-socket-proxy:v0.5.0
+    image: tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
     restart: unless-stopped
     environment:
       CONTAINERS: "1"
@@ -81,8 +80,6 @@ services:
         max-file: "3"
 
 networks:
-  # Apps join this network as an external network and Traefik reaches them
-  # by service name.
   proxy:
     name: proxy
   socket:
