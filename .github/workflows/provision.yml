@@ -35,24 +35,20 @@ jobs:
       TF_VAR_ses_dkim_tokens: ${{ vars.SES_DKIM_TOKENS }}
       TF_VAR_ssh_public_key_path: /tmp/yz-infra-ssh.pub
       TF_VAR_ssh_source_cidrs: "[]"
-      TF_VAR_tailscale_authkey: ${{ secrets.TF_VAR_TAILSCALE_AUTHKEY }}
-      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-      PORKBUN_API_KEY: ${{ secrets.PORKBUN_API_KEY }}
-      PORKBUN_SECRET_KEY: ${{ secrets.PORKBUN_SECRET_KEY }}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.TF_STATE_REGION }}
           role-session-name: yz-infra-tofu
 
       - name: Set up OpenTofu
-        uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1
+        uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f
         with:
           tofu_version: 1.13.9
 
@@ -69,6 +65,11 @@ jobs:
           EOF
 
       - name: Init, validate, plan
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          TF_VAR_tailscale_authkey: ${{ secrets.TF_VAR_TAILSCALE_AUTHKEY }}
+          PORKBUN_API_KEY: ${{ secrets.PORKBUN_API_KEY }}
+          PORKBUN_SECRET_KEY: ${{ secrets.PORKBUN_SECRET_KEY }}
         run: |
           set -euo pipefail
           tofu -chdir=tofu init -backend-config="$RUNNER_TEMP/backend.tfvars" -input=false -no-color
@@ -78,6 +79,11 @@ jobs:
 
       - name: Apply
         if: github.event_name == 'workflow_dispatch' && inputs.apply
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          TF_VAR_tailscale_authkey: ${{ secrets.TF_VAR_TAILSCALE_AUTHKEY }}
+          PORKBUN_API_KEY: ${{ secrets.PORKBUN_API_KEY }}
+          PORKBUN_SECRET_KEY: ${{ secrets.PORKBUN_SECRET_KEY }}
         run: |
           set -euo pipefail
           tofu -chdir=tofu apply -input=false -no-color tfplan

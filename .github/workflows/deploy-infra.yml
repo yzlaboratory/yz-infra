@@ -13,8 +13,6 @@ on:
 permissions:
   contents: read
 
-# Set the repository variable INFRA_DEPLOY_ENABLED=true after the first
-# successful manual run. Until then, push-triggered runs are skipped.
 concurrency:
   group: deploy-infra
   cancel-in-progress: false
@@ -25,32 +23,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      SSH_HOST: ${{ secrets.SSH_HOST }}
-      SSH_USER: ${{ secrets.SSH_USER }}
-      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
       ACME_EMAIL: ${{ vars.ACME_EMAIL }}
       ACME_CA_SERVER: ${{ vars.ACME_CA_SERVER }}
       TRAEFIK_LOG_LEVEL: ${{ vars.TRAEFIK_LOG_LEVEL || 'INFO' }}
       RESTIC_REPOSITORY: ${{ vars.RESTIC_REPOSITORY }}
-      RESTIC_PASSWORD: ${{ secrets.RESTIC_PASSWORD }}
       RESTIC_CHECK: ${{ vars.RESTIC_CHECK || '0' }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Validate required configuration
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+          RESTIC_PASSWORD: ${{ secrets.RESTIC_PASSWORD }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
           : "${SSH_HOST:?set repository secret SSH_HOST}"
           : "${SSH_USER:?set repository secret SSH_USER}"
           : "${SSH_PRIVATE_KEY:?set repository secret SSH_PRIVATE_KEY}"
+          : "${SSH_KNOWN_HOSTS:?set repository secret SSH_KNOWN_HOSTS}"
           : "${TS_OAUTH_CLIENT_ID:?set repository secret TS_OAUTH_CLIENT_ID}"
           : "${TS_OAUTH_SECRET:?set repository secret TS_OAUTH_SECRET}"
           : "${ACME_EMAIL:?set repository variable ACME_EMAIL}"
@@ -60,26 +59,26 @@ jobs:
           : "${R2_SECRET_ACCESS_KEY:?set repository secret R2_SECRET_ACCESS_KEY}"
 
       - name: Join tailnet
-        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3
+        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
       - name: Configure SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
           install -d -m 0700 "$HOME/.ssh"
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
           chmod 0600 "$HOME/.ssh/id_ed25519"
-
-          if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
-            printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
-          else
-            ssh-keyscan -H "$SSH_HOST" >> "$HOME/.ssh/known_hosts"
-          fi
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           if [[ ! -s $HOME/.ssh/known_hosts ]]; then
-            echo "could not obtain a host key for $SSH_HOST" >&2
+            echo "SSH_KNOWN_HOSTS is empty" >&2
             exit 1
           fi
           chmod 0600 "$HOME/.ssh/known_hosts"
@@ -134,6 +133,11 @@ jobs:
 
       - name: Write stack environment
         if: steps.health.outputs.skip != 'true'
+        env:
+          RESTIC_PASSWORD: ${{ secrets.RESTIC_PASSWORD }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
         run: |
           set -euo pipefail
           umask 077

@@ -67,8 +67,8 @@ on:
         description: Private key for the deploy user.
         required: true
       SSH_KNOWN_HOSTS:
-        description: Optional pinned known_hosts content.
-        required: false
+        description: Pinned known_hosts content for the server.
+        required: true
       TS_OAUTH_CLIENT_ID:
         description: Tailscale OAuth client ID for an ephemeral CI node.
         required: false
@@ -86,9 +86,6 @@ permissions:
   contents: read
   packages: read
 
-# One deploy at a time per app. Each deploy uses an isolated temporary Docker
-# config, so different apps can deploy concurrently without clobbering each
-# other's registry credentials.
 concurrency:
   group: deploy-${{ inputs.app_name }}
   cancel-in-progress: false
@@ -106,17 +103,11 @@ jobs:
       BACKUP_SCRIPT: ${{ inputs.backup_script }}
       HEALTH_URL: ${{ inputs.health_url }}
       REMOTE_ROOT: ${{ inputs.remote_root }}
-      SSH_HOST: ${{ secrets.SSH_HOST }}
-      SSH_USER: ${{ secrets.SSH_USER }}
       SSH_PORT: ${{ inputs.ssh_port }}
-      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN || github.token }}
-      GHCR_USER: ${{ secrets.GHCR_USER || github.actor }}
 
     steps:
       - name: Check out caller repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ inputs.ref || github.sha }}
 
@@ -132,6 +123,10 @@ jobs:
             echo "invalid image repository: $IMAGE" >&2
             exit 1
           fi
+          if [[ ! $REMOTE_ROOT =~ ^/[A-Za-z0-9._/-]+$ ]] || [[ $REMOTE_ROOT == *..* ]]; then
+            echo "invalid remote_root: $REMOTE_ROOT" >&2
+            exit 1
+          fi
           tag="${TAG_INPUT:-}"
           if [[ -z $tag ]]; then
             sha="${SHA_INPUT:-$GITHUB_SHA}"
@@ -145,26 +140,26 @@ jobs:
 
       - name: Join tailnet
         if: inputs.use_tailscale
-        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3
+        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
       - name: Configure SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
           install -d -m 0700 "$HOME/.ssh"
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
           chmod 0600 "$HOME/.ssh/id_ed25519"
-
-          if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
-            printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
-          else
-            ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> "$HOME/.ssh/known_hosts"
-          fi
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           if [[ ! -s $HOME/.ssh/known_hosts ]]; then
-            echo "could not obtain a host key for $SSH_HOST" >&2
+            echo "SSH_KNOWN_HOSTS is empty" >&2
             exit 1
           fi
           chmod 0600 "$HOME/.ssh/known_hosts"
@@ -184,6 +179,8 @@ jobs:
       - name: Deploy
         env:
           IMAGE_REF: ${{ steps.image.outputs.ref }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN || github.token }}
+          GHCR_USER: ${{ secrets.GHCR_USER || github.actor }}
         run: |
           set -euo pipefail
           remote_dir="${REMOTE_ROOT}/${APP_NAME}"
