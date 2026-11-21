@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Copy the proxy or ops stack to the server and start it.
-#
-# Usage:
-#   scripts/sync-stack.sh <tailscale-ip-or-host> [proxy|ops]
-#
-# The remote directory must already contain a .env for proxy. Create it once:
-#   ssh deploy@<host> 'cd /srv/proxy && cp .env.example .env && nano .env'
 set -euo pipefail
 
 HOST=${1:-}
@@ -38,5 +31,9 @@ rsync -az --delete \
   --exclude 'acme.json' \
   --exclude 'backups/' \
   "$SOURCE/" "deploy@$HOST:$DEST/"
+
+if [[ $STACK == "ops" ]]; then
+  ssh "deploy@$HOST" "sudo install -m 0755 '$DEST/restic/backup.sh' /usr/local/sbin/yz-backup.sh && sudo install -m 0755 '$DEST/restic/backup-volume.sh' /usr/local/sbin/yz-backup-volume.sh && sudo install -m 0644 '$DEST/systemd/yz-backup.service' '$DEST/systemd/yz-backup.timer' /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now yz-backup.timer"
+fi
 
 ssh "deploy@$HOST" "cd '$DEST' && docker compose up -d"

@@ -174,6 +174,7 @@ jobs:
         run: |
           set -euo pipefail
           ssh target 'sudo install -m 0755 /srv/ops/restic/backup.sh /usr/local/sbin/yz-backup.sh'
+          ssh target 'sudo install -m 0755 /srv/ops/restic/backup-volume.sh /usr/local/sbin/yz-backup-volume.sh'
           ssh target 'sudo install -m 0644 /srv/ops/systemd/yz-backup.service /srv/ops/systemd/yz-backup.timer /etc/systemd/system/'
           ssh target 'sudo systemctl daemon-reload && sudo systemctl enable --now yz-backup.timer'
 
