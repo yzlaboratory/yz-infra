@@ -66,7 +66,7 @@ The Hetzner firewall is the outer boundary. UFW is defense in depth. Docker publ
 - `jq` on your workstation for the Tailscale status check.
 - A Cloudflare R2 bucket and an S3 API token scoped to it with Object Read & Write.
 - An SSH key pair on your machine. The public key is injected at server creation.
-- A domain whose DNS you control. Point app hostnames at the server IP manually for now (see "Out of scope").
+- A domain whose DNS you control. Porkbun is used here; `auth` and SES DKIM records are managed by OpenTofu.
 - Strongly recommended for the first boot: your current public IP in CIDR form, so a failed Tailscale join does not require rescue mode.
 
 ## 1. First boot
@@ -97,7 +97,7 @@ tofu -chdir=tofu plan -out=tfplan
 tofu -chdir=tofu apply tfplan
 ```
 
-Use `tofu -chdir=tofu output server_ipv4` and `server_ipv6` for DNS records. Give cloud-init a few minutes; the hardening script waits up to 5 minutes for Tailscale, then confirm the backend is actually running before relying on it:
+`auth` A/AAAA and SES DKIM records are managed by OpenTofu. Give cloud-init a few minutes; the hardening script waits up to 5 minutes for Tailscale, then confirm the backend is actually running before relying on it:
 
 ```sh
 tailscale status --json | jq -r '.BackendState'
@@ -149,6 +149,25 @@ tofu -chdir=tofu force-unlock <LOCK_ID>
 
 The operator identity needs `s3:ListBucket` and `s3:GetBucketLocation` on the bucket and `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` on `yz-infra/terraform.tfstate` and its `.tflock` object. The state contains the Tailscale auth key, so keep the bucket private and use a dedicated credential. Client-side OpenTofu state encryption is not enabled; S3 SSE-S3 plus IAM is the current boundary.
 
+### DNS
+
+OpenTofu manages:
+
+- `auth.<dns_zone>` A/AAAA records, using the server's current IPv4/IPv6 addresses
+- the SES DKIM CNAMEs for `<ses_mail_subdomain>.<dns_zone>`
+
+`dns_zone`, `app_subdomain`, `ses_mail_subdomain`, and `ses_dkim_tokens` are variables. The existing records were imported into state, so the first plan is a no-op. `PORKBUN_API_KEY` and `PORKBUN_SECRET_KEY` are GitHub secrets used by plan/apply.
+
+### Provisioning workflow
+
+`Provision infra` runs a plan on pushes under `tofu/**` and applies only from a manual `workflow_dispatch` with `apply=true`. It uses GitHub OIDC to assume a role scoped to the state bucket; no long-lived AWS keys are stored.
+
+Required repository variables: `AWS_ROLE_ARN`, `TF_STATE_BUCKET`, `TF_STATE_REGION`, `SSH_PUBLIC_KEY`, `DNS_ZONE`, `SES_DKIM_TOKENS`.
+
+Required repository secrets: `HCLOUD_TOKEN`, `TF_VAR_TAILSCALE_AUTHKEY`, `PORKBUN_API_KEY`, `PORKBUN_SECRET_KEY`.
+
+The Tailscale key is only used when a server is created. If you rebuild the server, use a fresh non-ephemeral key.
+
 ## 2. Deploy the shared stack
 
 The `Deploy infra stack` workflow owns the proxy, ops, and backup stack:
@@ -196,14 +215,14 @@ The stack workflow uses only GitHub secrets/variables; nothing has to stay in a 
 
 - **Stack deploy:** `SSH_*`, `TS_OAUTH_*`, `RESTIC_PASSWORD`, `R2_*`, `ACME_EMAIL`, `RESTIC_REPOSITORY`.
 - **Future OpenTofu provisioning workflow:** `HCLOUD_TOKEN` and the server `TF_VAR_tailscale_authkey`. The server key is only used at first boot; CI uses the Tailscale OAuth client.
-- **Future DNS automation:** `PORKBUN_API_KEY` and `PORKBUN_SECRET_KEY` (or Cloudflare equivalents), once the provider/zone is chosen.
+- **DNS automation:** `PORKBUN_API_KEY`, `PORKBUN_SECRET_KEY`, `DNS_ZONE`, and `SES_DKIM_TOKENS` for the Porkbun-managed `auth` and SES records.
 - **State access:** the OpenTofu S3 backend needs AWS credentials. Prefer a GitHub OIDC role scoped to the state bucket over long-lived AWS keys.
 
 Put production credentials in a protected GitHub environment (for example `production`) with required reviewers, and never expose them to `pull_request` workflows.
 
 ### Manual fallback: Traefik
 
-DNS for every app hostname must point at the server before the first certificate request. Point records directly at the server IP (Cloudflare "DNS only") for HTTP-01 issuance. A proxied Cloudflare record with Full (strict) fails before Traefik has a valid origin certificate; use DNS-only for the first issuance, then switch to proxied Full (strict) once the certificate exists.
+The auth hostname is created by OpenTofu, so it already points at the server. Additional app hostnames should be added as Porkbun records (preferably as `porkbun_dns_record` resources in `tofu/dns.tf`) before their first certificate request. Use DNS-only records for HTTP-01 issuance; only move to a proxied Cloudflare setup after deciding on the certificate strategy.
 
 ```sh
 rsync -az --exclude '.env' --exclude 'acme.json' --exclude 'backups/' proxy/ deploy@<tailscale-ip>:/srv/proxy/
@@ -303,7 +322,7 @@ Each app is a separate repo. Copy `apps/example/` as a starting point.
    - set a JSON log driver with `max-size` and `max-file`.
 2. **Image contract.** The app's Docker workflow must push `sha-<7>` tags to GHCR. The deploy workflow defaults to that tag. Use immutable tags; `latest` works mechanically but is not recommended.
 3. **Server env.** Create `/srv/apps/<app>/.env` once on the server from the app's `.env.example`, with mode `0600`. The deploy workflow copies the compose file and an optional `backup.sh` at the repo root; secrets stay on the server.
-4. **DNS.** Add an A/AAAA record for the app hostname pointing at the server's public IP.
+4. **DNS.** Add an A/AAAA record for the app hostname. Prefer a `porkbun_dns_record` resource in `tofu/dns.tf`; otherwise add it manually.
 5. **Deploy.** Call the reusable workflow from the app repo:
 
 ```yaml
@@ -381,7 +400,7 @@ Set `APP_DOMAIN` and `APP_PORT` in that file before the first deploy, along with
 These are known gaps, not oversights:
 
 - **State bucket and IAM bootstrap are operator-managed.** `scripts/bootstrap-state-bucket.sh` creates and configures the bucket; the least-privilege IAM identity is created separately. Client-side OpenTofu state encryption is deferred; S3 SSE-S3 plus IAM is the current boundary.
-- **DNS automation.** Records are manual. Add a Porkbun or Cloudflare provider when the hostname list stops changing by hand.
+- **Additional DNS records beyond auth/SES.** `dns.tf` manages the auth hostname and SES DKIM; new product hostnames are added there or manually.
 - **Central logging and metrics.** No Loki, Grafana, Beszel, or Netdata. Dozzle plus Uptime Kuma is the starting point.
 - **WAF/DDoS beyond provider defaults.** Hetzner and optional Cloudflare only. No CrowdSec or blocklist cron.
 - **Image pruning.** No scheduled `docker image prune`; add a timer when disk usage becomes a problem.
