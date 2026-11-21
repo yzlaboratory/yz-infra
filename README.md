@@ -162,7 +162,7 @@ OpenTofu manages:
 
 `Provision infra` runs a plan on pushes under `tofu/**` and applies only from a manual `workflow_dispatch` with `apply=true`. It uses GitHub OIDC to assume a role scoped to the state bucket; no long-lived AWS keys are stored.
 
-Required repository variables: `AWS_ROLE_ARN`, `TF_STATE_BUCKET`, `TF_STATE_REGION`, `SSH_PUBLIC_KEY`, `DNS_ZONE`, `SES_DKIM_TOKENS`.
+Required repository variables: `AWS_ROLE_ARN`, `TF_STATE_BUCKET`, `TF_STATE_REGION`, `SSH_PUBLIC_KEY`, `DNS_ZONE`, and `SES_DKIM_TOKENS` (a JSON list, for example `["abc123","def456"]`).
 
 Required repository secrets: `HCLOUD_TOKEN`, `TF_VAR_TAILSCALE_AUTHKEY`, `PORKBUN_API_KEY`, `PORKBUN_SECRET_KEY`.
 
@@ -181,7 +181,7 @@ The `Deploy infra stack` workflow owns the proxy, ops, and backup stack:
 - writes `/etc/yz-infra/infra-deployed.sha`
 - installs and runs `/usr/local/sbin/yz-infra-health <sha>`
 
-The health probe is server-side and invoked over Tailscale SSH. It is intentionally not a public HTTP endpoint. It returns success only when the deployed SHA matches, Traefik/socket-proxy/Uptime Kuma/Dozzle are running, both localhost endpoints respond, and the backup timer is enabled and its last run did not fail. If the current revision is already marked healthy, the workflow skips the deploy steps.
+The health probe is server-side and invoked over Tailscale SSH. It is intentionally not a public HTTP endpoint. It returns success only when the deployed SHA matches, Traefik/socket-proxy/Uptime Kuma/Dozzle are running, both localhost endpoints respond, and the backup timer is enabled and the backup service has run without failing. If the current revision is already marked healthy, the workflow skips the deploy steps.
 
 Required repository variables:
 
@@ -195,7 +195,7 @@ Required repository secrets:
 - `SSH_HOST` — Tailscale IP of the server
 - `SSH_USER` — `deploy`
 - `SSH_PRIVATE_KEY` — contents of `~/.ssh/id_ed25519_yz_infra`
-- optional: `SSH_KNOWN_HOSTS`
+- `SSH_KNOWN_HOSTS` — pinned host key line(s), obtained once with `ssh-keyscan -H <tailscale-ip>` from a trusted network
 - `TS_OAUTH_CLIENT_ID` and `TS_OAUTH_SECRET` — OAuth client tagged `tag:ci`
 - `RESTIC_PASSWORD`
 - `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`
@@ -214,11 +214,11 @@ The manual Traefik/ops/restic commands below remain as a fallback.
 The stack workflow uses only GitHub secrets/variables; nothing has to stay in a local `.env` on this Mac except your Tailscale login.
 
 - **Stack deploy:** `SSH_*`, `TS_OAUTH_*`, `RESTIC_PASSWORD`, `R2_*`, `ACME_EMAIL`, `RESTIC_REPOSITORY`.
-- **Future OpenTofu provisioning workflow:** `HCLOUD_TOKEN` and the server `TF_VAR_tailscale_authkey`. The server key is only used at first boot; CI uses the Tailscale OAuth client.
+- **OpenTofu provisioning workflow:** `HCLOUD_TOKEN` and the server `TF_VAR_tailscale_authkey`. The server key is only used at first boot; CI uses the Tailscale OAuth client.
 - **DNS automation:** `PORKBUN_API_KEY`, `PORKBUN_SECRET_KEY`, `DNS_ZONE`, and `SES_DKIM_TOKENS` for the Porkbun-managed `auth` and SES records.
 - **State access:** the OpenTofu S3 backend needs AWS credentials. Prefer a GitHub OIDC role scoped to the state bucket over long-lived AWS keys.
 
-Put production credentials in a protected GitHub environment (for example `production`) with required reviewers, and never expose them to `pull_request` workflows.
+This setup uses repository-level secrets for a single environment. Restrict repository write access, require review for changes to `.github/workflows/`, and never expose these secrets to `pull_request` workflows.
 
 ### Manual fallback: Traefik
 
@@ -277,10 +277,10 @@ Configure Uptime Kuma monitors from its UI. They are not in git unless you expor
 The host script installs `restic`. Backups cover `/srv/apps`, `/srv/proxy`, `/srv/ops`, and `/etc/yz-infra`, except `/etc/yz-infra/restic.env` and `/etc/yz-infra/bootstrap.env` (keep the restic credentials in a password manager; the bootstrap file can contain the Tailscale key if a join failed). The example target is **Cloudflare R2** over its S3-compatible API. Swap the repository URL for B2 or SFTP if you prefer; those backends need different credentials (`B2_ACCOUNT_ID`/`B2_ACCOUNT_KEY`, or an SSH key and known_hosts).
 
 ```sh
-# 1. Install the script and units
-scp ops/restic/backup.sh deploy@<tailscale-ip>:/tmp/yz-backup.sh
+# 1. Install the scripts and units
+scp ops/restic/backup.sh ops/restic/backup-volume.sh deploy@<tailscale-ip>:/tmp/
 scp ops/systemd/yz-backup.service ops/systemd/yz-backup.timer deploy@<tailscale-ip>:/tmp/
-ssh deploy@<tailscale-ip> 'sudo install -m 0755 /tmp/yz-backup.sh /usr/local/sbin/yz-backup.sh && sudo install -m 0644 /tmp/yz-backup.service /tmp/yz-backup.timer /etc/systemd/system/'
+ssh deploy@<tailscale-ip> 'sudo install -m 0755 /tmp/backup.sh /usr/local/sbin/yz-backup.sh && sudo install -m 0755 /tmp/backup-volume.sh /usr/local/sbin/yz-backup-volume.sh && sudo install -m 0644 /tmp/yz-backup.service /tmp/yz-backup.timer /etc/systemd/system/'
 
 # 2. Create the encrypted repo config. Start from the example and keep it 0600.
 scp ops/restic/restic.env.example deploy@<tailscale-ip>:/tmp/restic.env
@@ -355,6 +355,7 @@ jobs:
       SSH_HOST: ${{ secrets.SSH_HOST }}          # Tailscale IP of the VPS
       SSH_USER: ${{ secrets.SSH_USER }}          # deploy
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
       TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
       GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}      # read:packages PAT
@@ -389,6 +390,7 @@ Set `APP_DOMAIN` and `APP_PORT` in that file before the first deploy, along with
 - **Disk pressure.** Docker log rotation is set in `/etc/docker/daemon.json`; app compose files should set their own limits too. Watch disk with Uptime Kuma, or add Beszel/Netdata later.
 - **Automatic reboots.** `unattended-upgrades` reboots at 04:30 when required. Containers restart because of `restart: unless-stopped`.
 - **Traefik state.** Certificates live in the `proxy-letsencrypt` volume and are included in the proxy backup hook. Repeated deletion can hit Let's Encrypt rate limits.
+- **Pinned images.** The shared stack pins image digests; Dependabot opens update PRs for the proxy, ops, GitHub Actions, and OpenTofu providers.
 - **Socket access.** The Docker socket proxy reduces the API surface, but anything with socket access is effectively root on the host. Keep `socket-proxy` internal and do not expose it.
 - **Passwordless sudo.** The `deploy` user gets `NOPASSWD:ALL` because admin commands and the backup hooks need root without an interactive password. The deploy password is locked, so do not remove the sudoers drop-in unless you first create another password-capable admin path. Membership in the `docker` group is already root-equivalent.
 - **Secrets in state.** The Tailscale auth key is in state. The S3 bucket uses SSE-S3, versioning, public-access blocks, and a dedicated IAM identity. Use a non-ephemeral server key, rotate it, and keep the state bucket credentials separate from the R2 backup credentials.
