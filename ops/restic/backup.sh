@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Daily restic backup for the yz-infra host.
-#
-# Runs from systemd as root. Configuration comes from
-# /etc/yz-infra/restic.env. The example targets Cloudflare R2 over the S3 API;
-# B2 or SFTP work with a different RESTIC_REPOSITORY.
 set -euo pipefail
 
 ENV_FILE=${RESTIC_ENV_FILE:-/etc/yz-infra/restic.env}
@@ -28,8 +23,6 @@ on_exit() {
 }
 trap on_exit EXIT
 
-# Give each app/stack a chance to produce a consistent database dump before the
-# snapshot. Hooks must be executable.
 shopt -s nullglob
 hook_failed=0
 for hook in /srv/apps/*/backup.sh /srv/proxy/backup.sh /srv/ops/backup.sh; do

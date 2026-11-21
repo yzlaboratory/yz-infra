@@ -1,15 +1,11 @@
 name: example
-# Rename the project, the Traefik label prefixes ("example"), and the hostname
-# when you copy this template into a new app repository.
 
 services:
   app:
-    # The deploy workflow sets IMAGE_REF to ghcr.io/<owner>/<app>:sha-<7>.
     image: ${IMAGE_REF:?set IMAGE_REF to a pinned image, e.g. ghcr.io/org/example:sha-abc1234}
     restart: unless-stopped
     env_file:
       - .env
-    # Never publish ports. Traefik reaches the container over the proxy network.
     expose:
       - "${APP_PORT:-3000}"
     networks:
@@ -17,21 +13,11 @@ services:
     labels:
       traefik.enable: "true"
       traefik.docker.network: "proxy"
-      # Replace "example" with your app name. Router and service names must be
-      # unique across the whole Docker host.
       traefik.http.routers.example.rule: "Host(`${APP_DOMAIN:?set APP_DOMAIN in .env}`)"
       traefik.http.routers.example.entrypoints: "websecure"
       traefik.http.routers.example.tls.certresolver: "letsencrypt"
       traefik.http.routers.example.middlewares: "security-headers@file,compress@file"
       traefik.http.services.example.loadbalancer.server.port: "${APP_PORT:-3000}"
-    # Add an app-specific healthcheck. docker compose up --wait uses it, and
-    # the deploy workflow waits for it before declaring success.
-    # healthcheck:
-    #   test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${APP_PORT:-3000}/healthz >/dev/null || exit 1"]
-    #   interval: 30s
-    #   timeout: 5s
-    #   retries: 5
-    #   start_period: 30s
     logging:
       driver: json-file
       options:

@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# Create the dedicated S3 bucket used for OpenTofu state.
-#
-# Usage:
-#   scripts/bootstrap-state-bucket.sh [bucket] [region]
-#
-# Defaults:
-#   bucket = yz-infra-tfstate-<aws-account-id>
-#   region = eu-central-1
-#
-# Requires AWS credentials with permission to create and configure the bucket.
 set -euo pipefail
 
 REGION=${2:-eu-central-1}

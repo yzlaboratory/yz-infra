@@ -13,8 +13,6 @@ http:
     compress:
       compress: {}
 
-    # Attach to an app router to allow only localhost and the Tailscale CGNAT
-    # range. Useful for admin UIs that should not be public.
     internal-only:
       ipAllowList:
         sourceRange:
