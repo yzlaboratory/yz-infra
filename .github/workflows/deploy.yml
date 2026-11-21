@@ -84,6 +84,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 # One deploy at a time per app. Each deploy uses an isolated temporary Docker
 # config, so different apps can deploy concurrently without clobbering each
@@ -110,8 +111,8 @@ jobs:
       SSH_PORT: ${{ inputs.ssh_port }}
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
       SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-      GHCR_USER: ${{ secrets.GHCR_USER }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN || github.token }}
+      GHCR_USER: ${{ secrets.GHCR_USER || github.actor }}
 
     steps:
       - name: Check out caller repository
