@@ -1,9 +1,7 @@
 #cloud-config
-# Managed by yz-infra. Do not edit the rendered user data by hand.
 package_update: true
 package_upgrade: false
 
-# Disable password SSH and root login before the hardening script runs.
 ssh_pwauth: false
 disable_root: true
 
@@ -21,6 +19,7 @@ write_files:
       TAILSCALE_AUTH_KEY="${tailscale_authkey}"
       TAILSCALE_HOSTNAME="${tailscale_hostname}"
       TAILSCALE_SSH="${tailscale_ssh}"
+      ALLOW_TAILSCALE_UDP="${allow_tailscale_udp}"
       SSH_PORT="${ssh_port}"
       SWAP_SIZE_MB="${swap_size_mb}"
       TIMEZONE="${timezone}"

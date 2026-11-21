@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# yz-infra host hardening for Ubuntu 24.04.
-#
-# Idempotent: safe to re-run. cloud-init runs it once on first boot; run it
-# again over SSH after changing this file.
-#
-# Configuration comes from /etc/yz-infra/bootstrap.env when present. The
-# defaults below are for a standalone run; a cloud-init run always supplies
-# the environment file.
 set -euo pipefail
 
 LOG_FILE=/var/log/yz-harden.log
@@ -33,6 +25,7 @@ ENABLE_TAILSCALE=${ENABLE_TAILSCALE:-0}
 TAILSCALE_AUTH_KEY=${TAILSCALE_AUTH_KEY:-}
 TAILSCALE_HOSTNAME=${TAILSCALE_HOSTNAME:-$(hostname -s)}
 TAILSCALE_SSH=${TAILSCALE_SSH:-0}
+ALLOW_TAILSCALE_UDP=${ALLOW_TAILSCALE_UDP:-1}
 SWAP_SIZE_MB=${SWAP_SIZE_MB:-2048}
 TIMEZONE=${TIMEZONE:-UTC}
 
@@ -138,11 +131,8 @@ rm -f "$SUDOERS_TMP"
 
 log "configuring sshd"
 install -d -m 0755 /etc/ssh/sshd_config.d
-# 00- sorts before cloud-init's 50-cloud-init.conf. sshd uses the first value
-# it sees for most keywords, so this file must come first.
 SSHD_DROPIN=/etc/ssh/sshd_config.d/00-yz-hardening.conf
 cat > "$SSHD_DROPIN" <<EOF
-# Managed by yz-infra. Do not edit.
 Port $SSH_PORT
 PermitRootLogin no
 PasswordAuthentication no
@@ -197,9 +187,6 @@ if [[ $ENABLE_TAILSCALE == "1" ]]; then
     if [[ $TAILSCALE_SSH == "1" ]]; then
       TS_UP_ARGS+=(--ssh)
     fi
-    # tailscale up does not consume TS_AUTHKEY here; pass the key explicitly.
-    # It is briefly visible in the process list, so the key is scrubbed from
-    # bootstrap.env after a successful join.
     tailscale up --auth-key="$TAILSCALE_AUTH_KEY" "${TS_UP_ARGS[@]}" || log "warning: tailscale up failed"
   else
     log "Tailscale already has an IPv4 address"
@@ -223,9 +210,6 @@ if [[ $ENABLE_TAILSCALE == "1" ]]; then
 
   if [[ $TAILSCALE_OK -eq 1 ]]; then
     log "Tailscale is up: $(tailscale ip -4 | head -n1)"
-    # Do not leave the auth key on disk after a successful join. The key is
-    # still present in cloud-init metadata and OpenTofu state; use a
-    # non-ephemeral server key and rotate it.
     if [[ -f /etc/yz-infra/bootstrap.env ]]; then
       sed -i 's|^TAILSCALE_AUTH_KEY=.*|TAILSCALE_AUTH_KEY=""|' /etc/yz-infra/bootstrap.env
       chmod 0600 /etc/yz-infra/bootstrap.env
@@ -239,8 +223,6 @@ else
 fi
 
 log "configuring UFW"
-# Docker needs forwarding between bridge interfaces. The Hetzner firewall is the
-# outer boundary; UFW is defense in depth for host-level ports.
 if [[ -f /etc/default/ufw ]]; then
   sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
 fi
@@ -250,10 +232,11 @@ ufw allow 80/tcp
 ufw allow 443/tcp
 
 if [[ $TAILSCALE_OK -eq 1 ]]; then
-  # Remove any earlier bootstrap rule that allowed public SSH.
   ufw --force delete allow "$SSH_PORT"/tcp >/dev/null 2>&1 || true
   ufw allow in on tailscale0 to any port "$SSH_PORT" proto tcp
-  ufw allow 41641/udp
+  if [[ $ALLOW_TAILSCALE_UDP == "1" ]]; then
+    ufw allow 41641/udp
+  fi
 else
   ufw allow "$SSH_PORT"/tcp
 fi
@@ -298,10 +281,23 @@ EOF
 systemctl enable --now unattended-upgrades || log "warning: could not enable unattended-upgrades"
 
 if [[ $SWAP_SIZE_MB -gt 0 ]]; then
-  if ! swapon --show=NAME --noheadings 2>/dev/null | grep -Fx '/swapfile' >/dev/null; then
-    if [[ -L /swapfile ]]; then
-      die "/swapfile must not be a symlink"
-    fi
+  if [[ -L /swapfile ]]; then
+    die "/swapfile must not be a symlink"
+  fi
+  if [[ -e /swapfile && ! -f /swapfile ]]; then
+    die "/swapfile must be a regular file"
+  fi
+  SWAP_ACTIVE=0
+  if swapon --show=NAME --noheadings 2>/dev/null | grep -Fx '/swapfile' >/dev/null; then
+    SWAP_ACTIVE=1
+  fi
+  CURRENT_SWAP_BYTES=$(stat -c%s /swapfile 2>/dev/null || echo 0)
+  if [[ $SWAP_ACTIVE -eq 1 && $CURRENT_SWAP_BYTES -ne $((SWAP_SIZE_MB * 1024 * 1024)) ]]; then
+    swapoff /swapfile
+    SWAP_ACTIVE=0
+    rm -f /swapfile
+  fi
+  if [[ $SWAP_ACTIVE -eq 0 ]]; then
     if [[ ! -f /swapfile ]]; then
       log "creating ${SWAP_SIZE_MB}MB swap file"
       if ! fallocate -l "${SWAP_SIZE_MB}M" /swapfile 2>/dev/null; then
@@ -311,9 +307,14 @@ if [[ $SWAP_SIZE_MB -gt 0 ]]; then
     chmod 600 /swapfile
     mkswap /swapfile >/dev/null
     swapon /swapfile
-    grep -q '^/swapfile ' /etc/fstab || printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
   fi
+  grep -q '^/swapfile ' /etc/fstab || printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
 else
+  if swapon --show=NAME --noheadings 2>/dev/null | grep -Fx '/swapfile' >/dev/null; then
+    swapoff /swapfile
+  fi
+  sed -i '\|^/swapfile |d' /etc/fstab
+  rm -f /swapfile
   log "swap disabled (SWAP_SIZE_MB=0)"
 fi
 
@@ -322,8 +323,6 @@ cat > /etc/sysctl.d/99-yz-hardening.conf <<'EOF'
 kernel.dmesg_restrict = 1
 kernel.kptr_restrict = 2
 net.ipv4.tcp_syncookies = 1
-# Loose reverse-path filtering avoids dropping legitimate asymmetric traffic
-# from Docker bridges and Tailscale while still rejecting obvious spoofing.
 net.ipv4.conf.all.rp_filter = 2
 net.ipv4.conf.default.rp_filter = 2
 net.ipv4.conf.all.accept_redirects = 0

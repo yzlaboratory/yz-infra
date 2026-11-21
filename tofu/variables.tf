@@ -100,7 +100,7 @@ variable "allow_tailscale_udp" {
 }
 
 variable "swap_size_mb" {
-  description = "Swap file size in MB. 0 disables swap."
+  description = "Managed /swapfile size in MB. 0 disables the managed swap file."
   type        = number
   default     = 2048
 

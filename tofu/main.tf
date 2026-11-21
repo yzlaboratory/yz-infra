@@ -1,22 +1,21 @@
 locals {
-  # Keep only "type base64" from the public key. Dropping the comment avoids
-  # shell/YAML quoting surprises when the key is embedded in cloud-init.
   ssh_public_key = join(" ", regex("^(\\S+)\\s+(\\S+)", trimspace(file(pathexpand(var.ssh_public_key_path)))))
 
   tailscale_enabled  = nonsensitive(var.tailscale_authkey != "")
   tailscale_hostname = var.tailscale_hostname != "" ? var.tailscale_hostname : var.name
 
   cloud_init = templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    deploy_user        = var.deploy_user
-    ssh_public_key     = local.ssh_public_key
-    enable_tailscale   = local.tailscale_enabled ? "1" : "0"
-    tailscale_authkey  = var.tailscale_authkey
-    tailscale_hostname = local.tailscale_hostname
-    tailscale_ssh      = var.tailscale_ssh ? "1" : "0"
-    ssh_port           = var.ssh_port
-    swap_size_mb       = var.swap_size_mb
-    timezone           = var.timezone
-    harden_script      = file("${path.module}/../host/harden.sh")
+    deploy_user         = var.deploy_user
+    ssh_public_key      = local.ssh_public_key
+    enable_tailscale    = local.tailscale_enabled ? "1" : "0"
+    tailscale_authkey   = var.tailscale_authkey
+    tailscale_hostname  = local.tailscale_hostname
+    tailscale_ssh       = var.tailscale_ssh ? "1" : "0"
+    allow_tailscale_udp = var.allow_tailscale_udp ? "1" : "0"
+    ssh_port            = var.ssh_port
+    swap_size_mb        = var.swap_size_mb
+    timezone            = var.timezone
+    harden_script       = file("${path.module}/../host/harden.sh")
   })
 
   base_labels = {
@@ -104,8 +103,6 @@ resource "hcloud_server" "this" {
   labels = merge(local.base_labels, var.labels)
 
   lifecycle {
-    # Script changes should be applied deliberately over SSH, not by rebuilding
-    # the server. See the README for the re-run command.
     ignore_changes = [user_data]
 
     precondition {
