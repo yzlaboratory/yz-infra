@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# Server-side health probe for the shared infra stack.
-#
-# Returns 0 only when:
-#   - the deployed git revision matches the expected revision
-#   - Traefik and socket-proxy are running and Traefik is healthy
-#   - Uptime Kuma and Dozzle are running
-#   - their localhost endpoints respond
-#   - the restic config exists and the backup timer is enabled
-#
-# Usage: yz-infra-health <expected-git-sha>
 set -euo pipefail
 
 [[ ${EUID} -eq 0 ]] || { echo "run as root" >&2; exit 1; }
@@ -32,17 +22,17 @@ if [[ $SKIP_REVISION -eq 0 ]]; then
   }
 fi
 
-proxy_service_running() {
-  docker compose -f /srv/proxy/compose.yaml -p proxy ps --status running --services | grep -qx "$1"
-}
-ops_service_running() {
-  docker compose -f /srv/ops/compose.yaml -p ops ps --status running --services | grep -qx "$1"
+service_running() {
+  local compose_file=$1
+  local project=$2
+  local service=$3
+  docker compose -f "$compose_file" -p "$project" ps --status running --services | grep -qx "$service"
 }
 
-proxy_service_running traefik || { echo "traefik is not running" >&2; exit 1; }
-proxy_service_running socket-proxy || { echo "socket-proxy is not running" >&2; exit 1; }
-ops_service_running uptime-kuma || { echo "uptime-kuma is not running" >&2; exit 1; }
-ops_service_running dozzle || { echo "dozzle is not running" >&2; exit 1; }
+service_running /srv/proxy/compose.yaml proxy traefik || { echo "traefik is not running" >&2; exit 1; }
+service_running /srv/proxy/compose.yaml proxy socket-proxy || { echo "socket-proxy is not running" >&2; exit 1; }
+service_running /srv/ops/compose.yaml ops uptime-kuma || { echo "uptime-kuma is not running" >&2; exit 1; }
+service_running /srv/ops/compose.yaml ops dozzle || { echo "dozzle is not running" >&2; exit 1; }
 
 TRAEFIK_ID=$(docker compose -f /srv/proxy/compose.yaml -p proxy ps -q traefik)
 TRAEFIK_HEALTH=unknown
@@ -67,6 +57,12 @@ done
 [[ -r /etc/yz-infra/restic.env ]] || { echo "missing /etc/yz-infra/restic.env" >&2; exit 1; }
 systemctl is-enabled --quiet yz-backup.timer || { echo "yz-backup.timer is not enabled" >&2; exit 1; }
 systemctl is-active --quiet yz-backup.timer || { echo "yz-backup.timer is not active" >&2; exit 1; }
+
+LAST_RUN=$(systemctl show -p ExecMainStartTimestamp --value yz-backup.service 2>/dev/null || true)
+if [[ -z $LAST_RUN || $LAST_RUN == "n/a" ]]; then
+  echo "yz-backup.service has never run" >&2
+  exit 1
+fi
 if systemctl is-failed --quiet yz-backup.service; then
   echo "the last yz-backup.service run failed" >&2
   exit 1
